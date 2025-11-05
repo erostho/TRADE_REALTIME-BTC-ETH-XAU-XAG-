@@ -543,7 +543,7 @@ def flush_batch():
         # Chỉ gửi đúng phút 00 hoặc 30
         TG_BATCH.clear()
         return
-    title = f"[{stg}] CẬP NHẬT THỊ TRƯỜNG"
+    title = f"CẬP NHẬT THỊ TRƯỜNG"
     body = title + "\n" + "\n──────────\n".join(TG_BATCH)  # đường kẻ tách BTC/ETH
     telegram_send(body)
     TG_BATCH.clear()

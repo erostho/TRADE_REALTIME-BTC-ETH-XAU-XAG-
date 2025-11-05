@@ -598,8 +598,9 @@ def flush_batch():
     if not TG_BATCH:
         return
     title = f"[{stage_now()}] CẬP NHẬT THỊ TRƯỜNG"
-    body = title + "\n" + "\n".join(TG_BATCH)
-    telegram_send(body) + "\n" + "──────────────────────────────"
+    separator = "\n" + ("─" * 35) + "\n"   # gạch ngang giữa các coin
+    body = title + "\n" + separator.join(TG_BATCH)
+    telegram_send(body)
     TG_BATCH.clear()
 # ===========================
 # Main Loop

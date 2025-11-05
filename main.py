@@ -89,7 +89,7 @@ MID_UPDATE_MIN = int(os.getenv("MID_UPDATE_MIN", "30"))
 BATCH_SIZE = max(1, int(os.getenv("BATCH_SIZE", "2")))
 TELE_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELE_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
-SIGNALS_FILE = "last_signals.pkl"
+SIGNAL_FILE = "last_signal.pkl"
 # Technical Parameters
 EMA_FAST = 20
 EMA_SLOW = 50
@@ -212,22 +212,21 @@ def load_cache():
         except Exception as e:
             print(f"[CACHE] Load error: {e}")
 # ==== Persist last_signal ====
-SIGNAL_FILE = "last_signal.pkl"
 def save_signals():
     try:
-        with open(SIGNALS_FILE, "wb") as f:
+        with open(SIGNAL_FILE, "wb") as f:
             pickle.dump(last_signal, f)
-        print(f"[SIGNAL] Saved to {SIGNALS_FILE} ({len(last_signal)} syms)")
+        print(f"[SIGNAL] Saved to {SIGNAL_FILE} ({len(last_signal)} syms)")
     except Exception as e:
         print(f"[SIGNAL] Save error: {e}")
 
 def load_signals():
     global last_signal
-    if os.path.exists(SIGNALS_FILE):
+    if os.path.exists(SIGNAL_FILE):
         try:
-            with open(SIGNALS_FILE, "rb") as f:
+            with open(SIGNAL_FILE, "rb") as f:
                 last_signal = pickle.load(f)
-            print(f"[SIGNAL] Loaded {len(last_signal)} syms from {SIGNALS_FILE}")
+            print(f"[SIGNAL] Loaded {len(last_signal)} syms from {SIGNAL_FILE}")
         except Exception as e:
             print(f"[SIGNAL] Load error: {e}")
       

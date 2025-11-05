@@ -155,44 +155,36 @@ def flush_batch():
     BATCH_LINES.clear()
       
 # Exchange init
-# ===========================
-# ======================
-# Exchange init (drop-in)
-# ======================
+# =========================
 def make_exchange(name: str):
+    import ccxt
     ex = ccxt.okx({
         'enableRateLimit': True,
-        'options': {
-            'defaultType': 'swap',      # dùng perp swap
-            'defaultSettle': 'USDT',    # ưu tiên USDT-M
-        }
+        # ép kiểu mặc định là swap
+        'options': { 'defaultType': 'swap', 'fetchMarkets': ['swap'] }
     })
 
-    # 1) cố gắng load SWAP
+    # cố gắng load theo options ở trên
     try:
-        markets = ex.load_markets(params={"instType": "SWAP"})
+        ex.load_markets()
+        return ex
     except Exception as e:
-        print(f"⚠️ load_markets(instType='SWAP') lỗi: {e} -> fallback load_markets()")
-        markets = ex.load_markets()
+        print(f"⚠️ load_markets() lỗi: {e} -> fallback chỉ lấy SWAP")
 
-    # 2) lọc sạch các market lỗi và không đúng loại
-    filtered = {}
-    for sym, m in markets.items():
-        # m.get('type') == 'swap' cho perp, tránh futures dated/index/option
-        # settle/quote về USDT
-        if m.get('type') == 'swap' and (m.get('settle') == 'USDT' or m.get('quote') == 'USDT'):
-            base  = m.get('base')
-            quote = m.get('quote')
-            if base and quote:          # tránh NoneType + 'str'
-                filtered[sym] = m
-
-    # 3) gán ngược cho exchange để phần sau dùng tập market đã lọc
-    ex.markets = filtered
-    ex.symbols = sorted(filtered.keys())
-
-    print(f"✅ Loaded {len(ex.symbols)} swap USDT markets")
+    # --- Fallback: tự gọi instruments SWAP và parse thủ công ---
+    data = ex.publicGetPublicInstruments({'instType': 'SWAP'})
+    rows = data.get('data', [])
+    safe = []
+    for r in rows:
+        base = r.get('baseCcy')
+        quote = r.get('quoteCcy')
+        # bỏ qua INDEX/OPTION (thiếu base/quote)
+        if not base or not quote:
+            continue
+        safe.append(ex.parse_market(r))
+    # đăng ký lại markets chỉ gồm SWAP
+    ex.set_markets(safe)
     return ex
-
 ex = make_exchange(EXCHANGE_NAME)
 
 # ===========================

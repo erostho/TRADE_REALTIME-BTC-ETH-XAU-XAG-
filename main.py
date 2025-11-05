@@ -38,7 +38,6 @@ import math
 import pickle
 import requests
 from datetime import datetime, timezone
-
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
@@ -62,7 +61,6 @@ TF_1D = os.getenv("TIMEFRAME_1D", "1d")
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
 MID_UPDATE_MIN = int(os.getenv("MID_UPDATE_MIN", "30"))
 BATCH_SIZE = max(1, int(os.getenv("BATCH_SIZE", "2")))
-
 TELE_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELE_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
@@ -490,67 +488,107 @@ def make_report(sym, a1, a2, a4, ad):
 # ===========================
 # Mid-interval management
 # ===========================
+# ==============================
+# Mid-cycle helper & update
+# ==============================
+
+def _ema(series, span):
+    return series.ewm(span=span, adjust=False).mean()
+
+def _macd(close):
+    ema12 = _ema(close, 12)
+    ema26 = _ema(close, 26)
+    macd = ema12 - ema26
+    signal = _ema(macd, 9)
+    hist = macd - signal
+    return macd.iloc[-1], signal.iloc[-1], hist.iloc[-1]
+
+def _rsi(close, period=14):
+    delta = close.diff()
+    up = delta.clip(lower=0)
+    down = -delta.clip(upper=0)
+    roll_up = up.ewm(alpha=1/period, adjust=False).mean()
+    roll_down = down.ewm(alpha=1/period, adjust=False).mean()
+    rs = roll_up / (roll_down.replace(0, np.nan))
+    rsi = 100 - (100 / (1 + rs))
+    return float(rsi.iloc[-1])
+
+def _mid_action_line(side, price, entry, sl, rsi, macd, macd_signal, macd_hist):
+    """
+    Trả về 1 câu hành động ngắn gọn (tiếng Việt).
+    Quy tắc:
+      - Gần SL + tín hiệu phục hồi (SELL) / suy yếu (LONG) -> giảm khối lượng/thoát bớt
+      - Hồi yếu gần Entry thuận xu hướng -> có thể thêm nhỏ
+      - Xu hướng mạnh thuận lệnh -> giữ
+    """
+    # khoảng cách % tới SL/Entry
+    def pct(a, b): 
+        return abs((a - b) / b) * 100.0 if b else 0.0
+
+    near_sl_pct = pct(price, sl)
+    near_entry_pct = pct(price, entry)
+
+    macd_up = macd > macd_signal and macd_hist > 0       # momentum phục hồi
+    macd_down = macd < macd_signal and macd_hist < 0     # momentum suy yếu
+
+    # Ngưỡng
+    NEAR_SL = 0.35     # % coi như "sát SL"
+    NEAR_ENTRY = 0.25  # % coi như "gần Entry"
+
+    if side == "sell":
+        # 1) Sát SL + phục hồi -> giảm bớt / thoát phần
+        if near_sl_pct <= NEAR_SL and (rsi > 60 or macd_up):
+            return "⚠️ Giá sát SL, momentum phục hồi → nên **giảm khối lượng hoặc thoát 1 phần**."
+        # 2) Hồi yếu gần Entry, xu hướng còn giảm -> có thể thêm nhỏ
+        if near_entry_pct <= NEAR_ENTRY and (50 <= rsi <= 60) and not macd_up:
+            return "✅ Hồi yếu gần Entry, trend giảm chưa đổi → **có thể thêm SELL nhỏ**."
+        # 3) Đà giảm rõ → giữ
+        if (rsi < 45 and macd_down) or (macd_hist < 0 and not macd_up):
+            return "📉 Đà giảm duy trì → **giữ SELL**, tránh chốt sớm."
+        # 4) Mặc định
+        return "ℹ️ Chưa có tín hiệu rõ ràng → **giữ lệnh**, chưa thêm vị thế."
+    else:  # side == "buy"
+        if near_sl_pct <= NEAR_SL and (rsi < 40 or macd_down):
+            return "⚠️ Giá sát SL, momentum suy yếu → nên **giảm khối lượng hoặc thoát 1 phần**."
+        if near_entry_pct <= NEAR_ENTRY and (40 <= rsi <= 50) and not macd_down:
+            return "✅ Nhúng nhẹ gần Entry, trend tăng chưa đổi → **có thể thêm BUY nhỏ**."
+        if (rsi > 55 and macd_up) or (macd_hist > 0 and not macd_down):
+            return "📈 Đà tăng duy trì → **giữ BUY**, tránh chốt sớm."
+        return "ℹ️ Chưa có tín hiệu rõ ràng → **giữ lệnh**, chưa thêm vị thế."
+
 def mid_update(sym, df1):
-    now = time.time()
-    if now - last_mid_update.get(sym, 0) < MID_UPDATE_MIN * 60:
-        return
-    last_mid_update[sym] = now
-
-    price_now = None
+    """
+    Tạo bản tin giữa kỳ **1 câu hành động duy nhất**.
+    df1 là DataFrame nến 1H đã có cột 'close' (và high/low/open nếu có).
+    Dùng last_signal[sym] (được lưu sau khi nến 1H đóng) để biết side/entry/SL.
+    """
     try:
-        t = ex.fetch_ticker(sym)
-        price_now = float(t["last"])
-    except Exception:
-        price_now = float(df1["close"].iloc[-1])
+        if sym not in last_signal or not last_signal[sym]:
+            return  # chưa có tín hiệu gốc để bám vào
 
-    df_temp = df1.copy()
-    df_temp.iloc[-1, df_temp.columns.get_loc("close")] = price_now
-    a1_live = analyze_one_tf(df_temp, TF_1H)
+        sig = last_signal[sym]
+        side = sig.get("side")
+        entry = float(sig.get("entry", 0))
+        sl    = float(sig.get("sl", 0))
 
-    msg_lines = [f"⏱️ <b>Giữa kỳ {sym}</b>",
-                 f"Giá hiện tại: {pretty_price(price_now)}",
-                 f"Trend tạm: {a1_live['trend']}, RSI={a1_live['rsi']:.1f}, MACD={a1_live['macd']:.3f}/{a1_live['macd_signal']:.3f}"]
+        price = float(df1["close"].iloc[-1])
+        rsi = _rsi(df1["close"])
+        macd, macd_signal, macd_hist = _macd(df1["close"])
 
-    sig = last_signal.get(sym)
-    advice = None
-    if sig:
-        side = sig["side"]
-        entry = sig["entry"]
-        sl = sig["sl"]
-        tp1 = sig["tp1"]
-        tp2 = sig["tp2"]
+        # 1 câu hành động
+        action = _mid_action_line(side, price, entry, sl, rsi, macd, macd_signal, macd_hist)
 
-        if side == "sell":
-            if price_now <= tp1:
-                advice = f"🎯 Gần/qua TP1 → chốt 50% & dời SL về {pretty_price(entry)}"
-            elif entry * 1.000 <= price_now <= entry * 1.003 and price_now < sl:
-                advice = f"📈 Hồi gần Entry → có thể thêm SELL nhỏ (SL {pretty_price(sl)})"
-            elif price_now >= sl * 0.995:
-                advice = f"⚠️ Sát SL → cân nhắc thoát bớt giảm rủi ro"
-            if a1_live['macd'] < a1_live['macd_signal'] and a1_live['rsi'] < 45:
-                advice = (advice or "") + "\n📉 Momentum yếu → giữ SELL/đẩy SL gần."
-            if a1_live['macd'] > a1_live['macd_signal'] and a1_live['rsi'] > 55:
-                advice = (advice or "") + "\n⚠️ Momentum phục hồi → tránh add SELL."
-        else:
-            if price_now >= tp1:
-                advice = f"🎯 Gần/qua TP1 → chốt 50% & dời SL về {pretty_price(entry)}"
-            elif entry * 0.997 <= price_now <= entry * 0.999 and price_now > sl:
-                advice = f"📉 Hồi gần Entry → có thể thêm BUY nhỏ (SL {pretty_price(sl)})"
-            elif price_now <= sl * 1.005:
-                advice = f"⚠️ Sát SL → cân nhắc thoát bớt giảm rủi ro"
-            if a1_live['macd'] > a1_live['macd_signal'] and a1_live['rsi'] > 55:
-                advice = (advice or "") + "\n📈 Momentum tốt → có thể giữ/đẩy SL."
-            if a1_live['macd'] < a1_live['macd_signal'] and a1_live['rsi'] < 45:
-                advice = (advice or "") + "\n⚠️ Momentum suy yếu → tránh add BUY."
-
-    else:
-        advice = "🕓 Chưa có tín hiệu gốc để quản lý."
-
-    if advice:
-        msg_lines.append(advice)
-
-    telegram_send("\n".join(msg_lines))
-    print("\n".join(msg_lines))
+        # soạn tin ngắn gọn
+        lines = [
+            f"⏱️ Giữa kỳ {sym}",
+            f"Giá hiện tại: {price:,.2f}",
+            f"RSI={rsi:.1f}, MACD={macd:.3f}/{macd_signal:.3f}",
+            action,
+        ]
+        telegram_send("\n".join(lines))
+    except Exception as e:
+        print(f"[MID_ERR][{sym}] {e}")
+      
 # =================
 # Telegram batching
 # =================

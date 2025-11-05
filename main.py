@@ -568,7 +568,7 @@ def mid_update(sym, df1):
     if advice:
         msg_lines.append(advice)
 
-    telegram_send("\n".join(msg_lines))
+    add_line(sym, "Giữa kỳ", text)
     print("\n".join(msg_lines))
 
       
@@ -589,9 +589,10 @@ def add_line(symbol, tf, text):
 def flush_batch():
     if not TG_BATCH:
         return
-    title = f"[{stage_now()}] CẬP NHẬT THỊ TRƯỜNG"
-    separator = "\n" + ("─" * 35) + "\n"   # gạch ngang giữa các coin
-    body = title + "\n" + separator.join(TG_BATCH)
+    # Tiêu đề cho bản cập nhật giữa kỳ
+    title = f"[{stage_now()}] CẬP NHẬT GIỮA KỲ THỊ TRƯỜNG"
+    # Gộp các symbol bằng đường kẻ rõ ràng
+    body = title + "\n" + "\n──────\n".join(TG_BATCH)
     telegram_send(body)
     TG_BATCH.clear()
 # ===========================

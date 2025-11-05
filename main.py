@@ -549,8 +549,7 @@ def mid_update(sym, df1):
     if advice:
         msg_lines.append(advice)
 
-    #telegram_send("\n".join(msg_lines))
-    add_line(sym, "MID", mid_text)   # mid_text là nội dung bạn tạo trong mid_update
+    telegram_send("\n".join(msg_lines))
     print("\n".join(msg_lines))
 # =================
 # Telegram batching

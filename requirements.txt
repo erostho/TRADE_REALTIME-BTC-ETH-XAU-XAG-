@@ -1,0 +1,5 @@
+ccxt
+gspread
+oauth2client
+tradingview_ta
+pandas

@@ -45,7 +45,35 @@ import os, requests
 import ccxt
 
 load_dotenv()
+from zoneinfo import ZoneInfo
 
+QUIET_ENABLE = os.getenv("QUIET_ENABLE", "1") == "1"
+QUIET_START  = os.getenv("QUIET_START", "00:00")  # HH:MM
+QUIET_END    = os.getenv("QUIET_END", "07:00")   # HH:MM
+QUIET_TZ     = os.getenv("QUIET_TZ", "Asia/Ho_Chi_Minh")
+
+def _parse_hhmm(s: str):
+    h, m = s.split(":")
+    return int(h), int(m)
+
+def in_quiet_hours() -> bool:
+    if not QUIET_ENABLE:
+        return False
+    try:
+        tz = ZoneInfo(QUIET_TZ)
+    except Exception:
+        tz = timezone.utc  # fallback
+    now_t = datetime.now(tz).time()
+    sh, sm = _parse_hhmm(QUIET_START)
+    eh, em = _parse_hhmm(QUIET_END)
+    from datetime import time as dtime
+    start = dtime(sh, sm)
+    end   = dtime(eh, em)
+    # nếu khoảng không qua nửa đêm: start > end
+    if start <= end:
+        return start <= now_t < end
+    else:
+        return now_t >= start or now_t < end
 # ===========================
 # Config
 # ===========================
@@ -63,6 +91,12 @@ MID_UPDATE_MIN = int(os.getenv("MID_UPDATE_MIN", "30"))
 BATCH_SIZE = max(1, int(os.getenv("BATCH_SIZE", "2")))
 TELE_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELE_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
+
+#IM LẶNG
+QUIET_ENABLE=1
+QUIET_START=00:00
+QUIET_END=07:00
+QUIET_TZ=Asia/Ho_Chi_Minh
 
 # Technical Parameters
 EMA_FAST = 20
@@ -138,6 +172,10 @@ def ts_to_str(ts_ms):
     return datetime.fromtimestamp(ts_ms/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def telegram_send(msg: str):
+    if in_quiet_hours():
+        print("🔕 Quiet hours: skip Telegram (telegram_send)")
+        return
+    ...
     if not TELE_TOKEN or not TELE_CHAT:
         print("[TELE] Skipped (no token/chat).")
         return
@@ -537,6 +575,10 @@ def add_line(symbol, tf, text):
 
 def flush_batch():
     if not TG_BATCH:
+        return
+    if in_quiet_hours():
+        print("🔕 Quiet hours: queued batch not sent.")
+        BATCH_LINES.clear()  # hoặc giữ lại nếu muốn gửi sau giờ yên lặng
         return
     stg = stage_now()
     if stg not in ("H1 CLOSE", "H1 MID"):

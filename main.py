@@ -90,12 +90,6 @@ BATCH_SIZE = max(1, int(os.getenv("BATCH_SIZE", "2")))
 TELE_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELE_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
-#IM LẶNG
-QUIET_ENABLE = 1
-QUIET_START = 00:00
-QUIET_END = 07:00
-QUIET_TZ = Asia/Ho_Chi_Minh
-
 # Technical Parameters
 EMA_FAST = 20
 EMA_SLOW = 50

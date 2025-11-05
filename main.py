@@ -523,8 +523,14 @@ TG_BATCH = []
 LAST_MID_KEY = {}  # chặn gửi trùng giữa kỳ theo phút
 
 def stage_now():
+    """Xác định đang ở đầu giờ (H1 CLOSE) hay giữa giờ (H1 MID), có nới ±5 phút."""
     m = datetime.now(timezone.utc).minute
-    return "H1 CLOSE" if m == 0 else ("H1 MID" if m == 30 else "RUN")
+    if 0 <= m <= 5:
+        return "H1 CLOSE"
+    elif 30 <= m <= 35:
+        return "H1 MID"
+    else:
+        return "RUN"
 
 def add_line(symbol, tf, text):
     TG_BATCH.append(f"• {symbol} [{tf}]\n{text}")

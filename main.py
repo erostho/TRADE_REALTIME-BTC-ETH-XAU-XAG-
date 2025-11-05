@@ -116,7 +116,7 @@ def make_exchange(name: str):
         })
     else:
         raise ValueError("EXCHANGE must be okx or binance")
-    ex.load_markets()
+    ex.load_markets(params={"instType": "SWAP"})
     return ex
 
 ex = make_exchange(EXCHANGE_NAME)

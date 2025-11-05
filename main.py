@@ -104,18 +104,11 @@ def init_state_structs(symbols):
 # Exchange init
 # ===========================
 def make_exchange(name: str):
-    if name == "okx":
-        ex = ccxt.okx({
-            "enableRateLimit": True,
-            "options": {"defaultType": "swap"},
-        })
-    elif name == "binance":
-        ex = ccxt.binance({
-            "enableRateLimit": True,
-            "options": {"defaultType": "future"},
-        })
-    else:
-        raise ValueError("EXCHANGE must be okx or binance")
+    ex = ccxt.okx({
+        'enableRateLimit': True,
+        'options': {'defaultType': 'swap'}  # dùng SWAP (perp)
+    })
+    # chỉ load thị trường SWAP, tránh OPTION/INDEX gây NoneType
     ex.load_markets(params={"instType": "SWAP"})
     return ex
 

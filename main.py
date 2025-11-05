@@ -98,62 +98,6 @@ def init_state_structs(symbols):
     last_mid_update = {sym: 0 for sym in symbols}
     last_signal = {sym: None for sym in symbols}
 
-# ================= TELEGRAM SEND =================
-
-def tg_send(text, parse_mode="Markdown"):
-    if not TG_TOKEN or not TG_CHAT:
-        print("⚠️ TELEGRAM env chưa có, bỏ qua gửi.")
-        return
-    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-    data = {
-        "chat_id": TG_CHAT,
-        "text": text,
-        "parse_mode": parse_mode,
-        "disable_web_page_preview": True
-    }
-    try:
-        r = requests.post(url, json=data, timeout=15)
-        print("📩 Telegram:", r.status_code, r.text[:120])
-    except Exception as e:
-        print("❌ Telegram error:", e)
-# ===========================
-# ================= TELEGRAM BATCH =================
-BATCH_LINES = []
-
-def stage_now():
-    """Xác định giai đoạn hiện tại — đầu giờ hay giữa giờ"""
-    now = datetime.now(timezone.utc).astimezone()
-    m = now.minute
-    if m == 0:
-        return "close"
-    if m == 30:
-        return "mid"
-    return "other"
-
-def add_line(symbol, timeframe, summary):
-    """Gom các dòng text cần gửi"""
-    BATCH_LINES.append(f"• *{symbol}* ({timeframe}): {summary}")
-
-def flush_batch():
-    """Gửi gộp 1 tin duy nhất"""
-    stg = stage_now()
-    if stg == "close":
-        header = "🕐 *TỔNG HỢP SAU KHI ĐÓNG NẾN 1H*"
-    elif stg == "mid":
-        header = "⏱️ *CẬP NHẬT GIỮA GIỜ (30’)*"
-    else:
-        print("⏸️ Không phải giờ gửi, bỏ qua Telegram.")
-        return
-
-    if not BATCH_LINES:
-        print("⚠️ Không có nội dung để gửi.")
-        return
-
-    body = "\n".join(BATCH_LINES)
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    tg_send(f"{header}\n{body}\n_{now_str}_")
-    BATCH_LINES.clear()
-      
 # Exchange init
 # =========================
 def make_exchange(name: str):
@@ -510,34 +454,38 @@ def make_report(sym, a1, a2, a4, ad):
 # ===========================
 # ==============================
 def mid_update(sym, df1):
-    now = time.time()
-    if now - last_mid_update.get(sym, 0) < MID_UPDATE_MIN * 60:
+    # Chỉ xử lý đúng phút 30 (giữa kỳ)
+    if stage_now() != "H1 MID":
         return
-    last_mid_update[sym] = now
 
-    price_now = None
+    # Chặn gửi trùng trong cùng phút (UTC)
+    now_key = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
+    if LAST_MID_KEY.get(sym) == now_key:
+        return
+    LAST_MID_KEY[sym] = now_key
+
+    # Giá live
     try:
         t = ex.fetch_ticker(sym)
         price_now = float(t["last"])
     except Exception:
         price_now = float(df1["close"].iloc[-1])
 
-    df_temp = df1.copy()
-    df_temp.iloc[-1, df_temp.columns.get_loc("close")] = price_now
-    a1_live = analyze_one_tf(df_temp, TF_1H)
+    # Phân tích khung 1H với giá live ở cây đang chạy
+    df_tmp = df1.copy()
+    df_tmp.iloc[-1, df_tmp.columns.get_loc("close")] = price_now
+    a1_live = analyze_one_tf(df_tmp, TF_1H)
 
-    msg_lines = [f"⏱️ <b>Giữa kỳ {sym}</b>",
-                 f"Giá hiện tại: {pretty_price(price_now)}",
-                 f"Trend tạm: {a1_live['trend']}, RSI={a1_live['rsi']:.1f}, MACD={a1_live['macd']:.3f}/{a1_live['macd_signal']:.3f}"]
+    lines = [
+        f"⏱️ Giữa kỳ {sym}",
+        f"Giá hiện tại: {pretty_price(price_now)}",
+        f"Trend tạm: {a1_live['trend']}, RSI={a1_live['rsi']:.1f}, MACD={a1_live['macd']:.3f}/{a1_live['macd_signal']:.3f}",
+    ]
 
     sig = last_signal.get(sym)
-    advice = None
+    advice = "🕓 Chưa có tín hiệu gốc để quản lý."
     if sig:
-        side = sig["side"]
-        entry = sig["entry"]
-        sl = sig["sl"]
-        tp1 = sig["tp1"]
-        tp2 = sig["tp2"]
+        side, entry, sl, tp1 = sig["side"], sig["entry"], sig["sl"], sig["tp1"]
 
         if side == "sell":
             if price_now <= tp1:
@@ -546,125 +494,94 @@ def mid_update(sym, df1):
                 advice = f"📈 Hồi gần Entry → có thể thêm SELL nhỏ (SL {pretty_price(sl)})"
             elif price_now >= sl * 0.995:
                 advice = f"⚠️ Sát SL → cân nhắc thoát bớt giảm rủi ro"
-            if a1_live['macd'] < a1_live['macd_signal'] and a1_live['rsi'] < 45:
-                advice = (advice or "") + "\n📉 Momentum yếu → giữ SELL/đẩy SL gần."
+            # Kết luận momentum, 1 dòng
             if a1_live['macd'] > a1_live['macd_signal'] and a1_live['rsi'] > 55:
-                advice = (advice or "") + "\n⚠️ Momentum phục hồi → tránh add SELL."
-        else:
+                advice = "⚠️ Momentum phục hồi → tránh add SELL."
+            elif a1_live['macd'] < a1_live['macd_signal'] and a1_live['rsi'] < 45:
+                advice = "📉 Momentum yếu → giữ SELL/đẩy SL gần."
+        else:  # buy
             if price_now >= tp1:
                 advice = f"🎯 Gần/qua TP1 → chốt 50% & dời SL về {pretty_price(entry)}"
             elif entry * 0.997 <= price_now <= entry * 0.999 and price_now > sl:
                 advice = f"📉 Hồi gần Entry → có thể thêm BUY nhỏ (SL {pretty_price(sl)})"
             elif price_now <= sl * 1.005:
                 advice = f"⚠️ Sát SL → cân nhắc thoát bớt giảm rủi ro"
-            if a1_live['macd'] > a1_live['macd_signal'] and a1_live['rsi'] > 55:
-                advice = (advice or "") + "\n📈 Momentum tốt → có thể giữ/đẩy SL."
             if a1_live['macd'] < a1_live['macd_signal'] and a1_live['rsi'] < 45:
-                advice = (advice or "") + "\n⚠️ Momentum suy yếu → tránh add BUY."
+                advice = "⚠️ Momentum suy yếu → tránh add BUY."
+            elif a1_live['macd'] > a1_live['macd_signal'] and a1_live['rsi'] > 55:
+                advice = "📈 Momentum tốt → có thể giữ/đẩy SL."
 
-    else:
-        advice = "🕓 Chưa có tín hiệu gốc để quản lý."
-
-    if advice:
-        msg_lines.append(advice)
-
-    telegram_send("\n".join(msg_lines))
-    print("\n".join(msg_lines))
-
-      
+    lines.append(advice)
+    add_line(sym, "H1 MID", "\n".join(lines))
 # =================
 # Telegram batching
 # =================
+# =================
+# Telegram batching (duy nhất)
+# =================
 TG_BATCH = []
+LAST_MID_KEY = {}  # chặn gửi trùng giữa kỳ theo phút
 
 def stage_now():
-    """Xác định đang ở đầu giờ (H1 close) hay giữa giờ (H1 mid)."""
-    # phút 0 => CLOSE nến 1H; phút 30 => MID của nến 1H
     m = datetime.now(timezone.utc).minute
     return "H1 CLOSE" if m == 0 else ("H1 MID" if m == 30 else "RUN")
 
 def add_line(symbol, tf, text):
-    TG_BATCH.append(f"• {symbol} [{tf}] {text}")
+    TG_BATCH.append(f"• {symbol} [{tf}]\n{text}")
 
 def flush_batch():
     if not TG_BATCH:
         return
-    title = f"[{stage_now()}] CẬP NHẬT THỊ TRƯỜNG"
-    separator = "\n" + ("─" * 35) + "\n"   # gạch ngang giữa các coin
-    body = title + "\n" + separator.join(TG_BATCH)
+    stg = stage_now()
+    if stg not in ("H1 CLOSE", "H1 MID"):
+        # Chỉ gửi đúng phút 00 hoặc 30
+        TG_BATCH.clear()
+        return
+    title = f"[{stg}] CẬP NHẬT THỊ TRƯỜNG"
+    body = title + "\n" + "\n──────────\n".join(TG_BATCH)  # đường kẻ tách BTC/ETH
     telegram_send(body)
     TG_BATCH.clear()
 # ===========================
 # Main Loop
 # ===========================
 def run_loop():
-    global last_cache_save
     init_state_structs(SYMBOLS)
-    print(f"[START] {EXCHANGE_NAME.upper()} • Multi-symbol: {', '.join(SYMBOLS)} • TF {TF_1H}/{TF_2H}/{TF_4H}/1D")
-    batch_index = 0
+    print(f"[START] {EXCHANGE_NAME.upper()} • Symbols: {', '.join(SYMBOLS)} • TF {TF_1H}/{TF_2H}/{TF_4H}/1D")
 
-    while True:
+    for sym in SYMBOLS:
         try:
-            start = batch_index * BATCH_SIZE
-            end = start + BATCH_SIZE
-            batch = SYMBOLS[start:end]
-            if not batch:
-                batch_index = 0
-                continue
+            df1 = fetch_ohlcv_cached(sym, TF_1H, limit=300)
+            is_close = (stage_now() == "H1 CLOSE")
+            # Nếu là phút 00, xử lý báo cáo sau khi đóng nến 1H
+            if is_close:
+                df2 = fetch_ohlcv_cached(sym, TF_2H, limit=300)
+                df4 = fetch_ohlcv_cached(sym, TF_4H, limit=300)
+                dfd = fetch_ohlcv_cached(sym, TF_1D, limit=200)
 
-            for sym in batch:
-                try:
-                    df1 = fetch_ohlcv_cached(sym, TF_1H, limit=300)
+                a1 = analyze_one_tf(df1, TF_1H)
+                a2 = analyze_one_tf(df2, TF_2H)
+                a4 = analyze_one_tf(df4, TF_4H)
+                ad = analyze_one_tf(dfd, TF_1D)
 
-                    new_1h = (last_closed_1h[sym] is None or int(df1["ts"].iloc[-1]) != last_closed_1h[sym])
-                    if new_1h:
-                        df2 = fetch_ohlcv_cached(sym, TF_2H, limit=300)
-                        df4 = fetch_ohlcv_cached(sym, TF_4H, limit=300)
-                        dfd = fetch_ohlcv_cached(sym, TF_1D, limit=200)
+                report, decided_side, reco = make_report(sym, a1, a2, a4, ad)
+                add_line(sym, "H1 CLOSE", report)
 
-                        a1 = analyze_one_tf(df1, TF_1H)
-                        a2 = analyze_one_tf(df2, TF_2H)
-                        a4 = analyze_one_tf(df4, TF_4H)
-                        ad = analyze_one_tf(dfd, TF_1D)
+                if decided_side and reco:
+                    last_signal[sym] = {
+                        "side": decided_side,
+                        "entry": a1["price"], "sl": reco["sl"],
+                        "tp1": reco["tp1"], "tp2": reco["tp2"], "time": a1["time"],
+                    }
 
-                        report, decided_side, reco = make_report(sym, a1, a2, a4, ad)
-                        print("="*72)
-                        print(report)
-
-                        # ✅ gom vào batch, hiển thị theo TF chính bạn đang phân tích (1H)
-                        add_line(sym, "1H", report)
-
-                        if decided_side and reco:
-                            last_signal[sym] = {
-                                "side": decided_side,
-                                "entry": a1["price"],
-                                "sl": reco["sl"],
-                                "tp1": reco["tp1"],
-                                "tp2": reco["tp2"],
-                                "time": a1["time"],
-                            }
-
-                        last_closed_1h[sym] = int(df1["ts"].iloc[-1])
-
-                    mid_update(sym, df1)
-
-                except Exception as e:
-                    print(f"[ERR][{sym}] {e}")
-            # ✅ gửi 1 tin duy nhất cho batch vừa xử lý
-            flush_batch()
-
-            if time.time() - last_cache_save > SAVE_INTERVAL:
-                save_cache()
-                last_cache_save = time.time()
-
-            total_batches = math.ceil(len(SYMBOLS)/BATCH_SIZE)
-            batch_index = (batch_index + 1) % max(1, total_batches)
-
-            time.sleep(POLL_SECONDS)
+            # Luôn gọi mid_update để nếu là phút 30 thì gom “Giữa kỳ”
+            mid_update(sym, df1)
 
         except Exception as e:
-            print(f"[LOOP] Error: {e}")
-            time.sleep(POLL_SECONDS)
+            print(f"[ERR][{sym}] {e}")
+
+    # Gửi (chỉ gửi khi đúng phút 00/30)
+    flush_batch()
+    save_cache()  # lưu cache rồi THOÁT
 
 if __name__ == "__main__":
     load_cache()

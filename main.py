@@ -581,7 +581,7 @@ def flush_batch():
         return
     if in_quiet_hours():
         print("🔕 Quiet hours: queued batch not sent.")
-        BATCH_LINES.clear()  # hoặc giữ lại nếu muốn gửi sau giờ yên lặng
+        TG_BATCH.clear()  # hoặc giữ lại nếu muốn gửi sau giờ yên lặng
         return
     stg = stage_now()
     if stg not in ("H1 CLOSE", "H1 MID"):
@@ -601,31 +601,41 @@ def run_loop():
 
     for sym in SYMBOLS:
         try:
+            # trước vòng for, đảm bảo có bộ nhớ:
+            # last_closed_1h = {sym: None for sym in SYMBOLS}
             df1 = fetch_ohlcv_cached(sym, TF_1H, limit=300)
-            is_close = (stage_now() == "H1 CLOSE")
-            # Nếu là phút 00, xử lý báo cáo sau khi đóng nến 1H
-            if is_close:
+            last_ts = int(df1["ts"].iloc[-1])
+            
+            # nếu là nến mới (đóng xong) thì phân tích và CẬP NHẬT last_signal
+            if last_closed_1h.get(sym) != last_ts:
                 df2 = fetch_ohlcv_cached(sym, TF_2H, limit=300)
                 df4 = fetch_ohlcv_cached(sym, TF_4H, limit=300)
                 dfd = fetch_ohlcv_cached(sym, TF_1D, limit=200)
-
+            
                 a1 = analyze_one_tf(df1, TF_1H)
                 a2 = analyze_one_tf(df2, TF_2H)
                 a4 = analyze_one_tf(df4, TF_4H)
                 ad = analyze_one_tf(dfd, TF_1D)
-
+            
                 report, decided_side, reco = make_report(sym, a1, a2, a4, ad)
-                add_line(sym, "H1 CLOSE", report)
-
+            
+                # chỉ GỬI report khi đúng H1 CLOSE
+                if stage_now() == "H1 CLOSE":
+                    add_line(sym, "H1 CLOSE", report)
+            
+                # nhưng last_signal thì CẬP NHẬT BẤT KỂ stage_now là gì
                 if decided_side and reco:
                     last_signal[sym] = {
                         "side": decided_side,
-                        "entry": a1["price"], "sl": reco["sl"],
-                        "tp1": reco["tp1"], "tp2": reco["tp2"], "time": a1["time"],
+                        "entry": a1["price"],
+                        "sl": reco["sl"], "tp1": reco["tp1"], "tp2": reco["tp2"],
+                        "time": a1["time"],
                     }
-                save_signals()
-
-            # Luôn gọi mid_update để nếu là phút 30 thì gom “Giữa kỳ”
+                    save_signals()
+            
+                last_closed_1h[sym] = last_ts
+            
+            # luôn xử lý giữa kỳ (hạn chế trùng đã có LAST_MID_KEY)
             mid_update(sym, df1)
 
         except Exception as e:

@@ -89,7 +89,7 @@ MID_UPDATE_MIN = int(os.getenv("MID_UPDATE_MIN", "30"))
 BATCH_SIZE = max(1, int(os.getenv("BATCH_SIZE", "2")))
 TELE_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELE_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
-
+SIGNALS_FILE = "last_signals.pkl"
 # Technical Parameters
 EMA_FAST = 20
 EMA_SLOW = 50
@@ -213,23 +213,23 @@ def load_cache():
             print(f"[CACHE] Load error: {e}")
 # ==== Persist last_signal ====
 SIGNAL_FILE = "last_signal.pkl"
+def save_signals():
+    try:
+        with open(SIGNALS_FILE, "wb") as f:
+            pickle.dump(last_signal, f)
+        print(f"[SIGNAL] Saved to {SIGNALS_FILE} ({len(last_signal)} syms)")
+    except Exception as e:
+        print(f"[SIGNAL] Save error: {e}")
 
 def load_signals():
     global last_signal
-    if os.path.exists(SIGNAL_FILE):
+    if os.path.exists(SIGNALS_FILE):
         try:
-            with open(SIGNAL_FILE, "rb") as f:
+            with open(SIGNALS_FILE, "rb") as f:
                 last_signal = pickle.load(f)
-            print(f"[SIGNAL] Loaded {len([k for k,v in last_signal.items() if v])} signals")
+            print(f"[SIGNAL] Loaded {len(last_signal)} syms from {SIGNALS_FILE}")
         except Exception as e:
             print(f"[SIGNAL] Load error: {e}")
-
-def save_signals():
-    try:
-        with open(SIGNAL_FILE, "wb") as f:
-            pickle.dump(last_signal, f)
-    except Exception as e:
-        print(f"[SIGNAL] Save error: {e}")
       
 def fetch_ohlcv_cached(symbol, timeframe, limit=300):
     key = (symbol, timeframe)
@@ -500,13 +500,10 @@ def make_report(sym, a1, a2, a4, ad):
 
 # ===========================
 # Mid-interval management
-# ===========================
-# ==============================
 def mid_update(sym, df1):
     # Chỉ xử lý đúng phút 30 (giữa kỳ)
     if stage_now() != "H1 MID":
         return
-
     # Chặn gửi trùng trong cùng phút (UTC)
     now_key = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
     if LAST_MID_KEY.get(sym) == now_key:
@@ -564,10 +561,6 @@ def mid_update(sym, df1):
     add_line(sym, "H1 MID", "\n".join(lines))
 # =================
 # Telegram batching
-# =================
-# =================
-# Telegram batching (duy nhất)
-# =================
 TG_BATCH = []
 LAST_MID_KEY = {}  # chặn gửi trùng giữa kỳ theo phút
 

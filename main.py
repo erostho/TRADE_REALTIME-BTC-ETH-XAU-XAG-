@@ -571,7 +571,7 @@ def flush_batch():
         return
     title = f"[{stage_now()}] CẬP NHẬT THỊ TRƯỜNG"
     body = title + "\n" + "\n".join(TG_BATCH)
-    telegram_send(body)
+    telegram_send(body) + "\n" + "──────────────────────────────"
     TG_BATCH.clear()
 # ===========================
 # Main Loop

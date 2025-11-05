@@ -211,7 +211,26 @@ def load_cache():
             print(f"[CACHE] Loaded {len(cache_ohlcv)} items from {CACHE_FILE}")
         except Exception as e:
             print(f"[CACHE] Load error: {e}")
+# ==== Persist last_signal ====
+SIGNAL_FILE = "last_signal.pkl"
 
+def load_signals():
+    global last_signal
+    if os.path.exists(SIGNAL_FILE):
+        try:
+            with open(SIGNAL_FILE, "rb") as f:
+                last_signal = pickle.load(f)
+            print(f"[SIGNAL] Loaded {len([k for k,v in last_signal.items() if v])} signals")
+        except Exception as e:
+            print(f"[SIGNAL] Load error: {e}")
+
+def save_signals():
+    try:
+        with open(SIGNAL_FILE, "wb") as f:
+            pickle.dump(last_signal, f)
+    except Exception as e:
+        print(f"[SIGNAL] Save error: {e}")
+      
 def fetch_ohlcv_cached(symbol, timeframe, limit=300):
     key = (symbol, timeframe)
     if key not in cache_ohlcv:
@@ -555,9 +574,9 @@ LAST_MID_KEY = {}  # chặn gửi trùng giữa kỳ theo phút
 def stage_now():
     """Xác định đang ở đầu giờ (H1 CLOSE) hay giữa giờ (H1 MID), có nới ±5 phút."""
     m = datetime.now(timezone.utc).minute
-    if 0 <= m <= 20:
+    if 0 <= m <= 05:
         return "H1 CLOSE"
-    elif 30 <= m <= 35:
+    elif 30 <= m <= 45:
         return "H1 MID"
     else:
         return "RUN"
@@ -612,6 +631,7 @@ def run_loop():
                         "entry": a1["price"], "sl": reco["sl"],
                         "tp1": reco["tp1"], "tp2": reco["tp2"], "time": a1["time"],
                     }
+                save_signals()
 
             # Luôn gọi mid_update để nếu là phút 30 thì gom “Giữa kỳ”
             mid_update(sym, df1)
@@ -625,4 +645,5 @@ def run_loop():
 
 if __name__ == "__main__":
     load_cache()
+    load_signals()     # <<< thêm dòng này
     run_loop()

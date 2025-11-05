@@ -118,7 +118,7 @@ ex = make_exchange(EXCHANGE_NAME)
 # Utilities
 # ===========================
 def ts_to_str(ts_ms):
-    return datetime.utcfromtimestamp(ts_ms/1000).replace(tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    return datetime.fromtimestamp(ts_ms/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def telegram_send(msg: str):
     if not TELE_TOKEN or not TELE_CHAT:

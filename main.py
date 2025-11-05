@@ -156,13 +156,41 @@ def flush_batch():
       
 # Exchange init
 # ===========================
+# ======================
+# Exchange init (drop-in)
+# ======================
 def make_exchange(name: str):
     ex = ccxt.okx({
         'enableRateLimit': True,
-        'options': {'defaultType': 'swap'}  # dùng SWAP (perp)
+        'options': {
+            'defaultType': 'swap',      # dùng perp swap
+            'defaultSettle': 'USDT',    # ưu tiên USDT-M
+        }
     })
-    # chỉ load thị trường SWAP, tránh OPTION/INDEX gây NoneType
-    ex.load_markets(params={"instType": "SWAP"})
+
+    # 1) cố gắng load SWAP
+    try:
+        markets = ex.load_markets(params={"instType": "SWAP"})
+    except Exception as e:
+        print(f"⚠️ load_markets(instType='SWAP') lỗi: {e} -> fallback load_markets()")
+        markets = ex.load_markets()
+
+    # 2) lọc sạch các market lỗi và không đúng loại
+    filtered = {}
+    for sym, m in markets.items():
+        # m.get('type') == 'swap' cho perp, tránh futures dated/index/option
+        # settle/quote về USDT
+        if m.get('type') == 'swap' and (m.get('settle') == 'USDT' or m.get('quote') == 'USDT'):
+            base  = m.get('base')
+            quote = m.get('quote')
+            if base and quote:          # tránh NoneType + 'str'
+                filtered[sym] = m
+
+    # 3) gán ngược cho exchange để phần sau dùng tập market đã lọc
+    ex.markets = filtered
+    ex.symbols = sorted(filtered.keys())
+
+    print(f"✅ Loaded {len(ex.symbols)} swap USDT markets")
     return ex
 
 ex = make_exchange(EXCHANGE_NAME)

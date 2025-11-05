@@ -45,11 +45,12 @@ import os, requests
 import ccxt
 
 load_dotenv()
-from zoneinfo import ZoneInfo
 
+from zoneinfo import ZoneInfo
+# ===== Quiet hours config (đọc từ ENV, dạng CHUỖI) =====
 QUIET_ENABLE = os.getenv("QUIET_ENABLE", "1") == "1"
-QUIET_START  = os.getenv("QUIET_START", "00:00")  # HH:MM
-QUIET_END    = os.getenv("QUIET_END", "07:00")   # HH:MM
+QUIET_START  = os.getenv("QUIET_START", "00:00")   # ví dụ "00:00"
+QUIET_END    = os.getenv("QUIET_END", "07:00")    # ví dụ "07:00"
 QUIET_TZ     = os.getenv("QUIET_TZ", "Asia/Ho_Chi_Minh")
 
 def _parse_hhmm(s: str):
@@ -62,18 +63,15 @@ def in_quiet_hours() -> bool:
     try:
         tz = ZoneInfo(QUIET_TZ)
     except Exception:
-        tz = timezone.utc  # fallback
-    now_t = datetime.now(tz).time()
+        tz = timezone.utc
+    now_local = datetime.now(tz).time()
     sh, sm = _parse_hhmm(QUIET_START)
     eh, em = _parse_hhmm(QUIET_END)
     from datetime import time as dtime
     start = dtime(sh, sm)
-    end   = dtime(eh, em)
-    # nếu khoảng không qua nửa đêm: start > end
-    if start <= end:
-        return start <= now_t < end
-    else:
-        return now_t >= start or now_t < end
+    end = dtime(eh, em)
+    # khoảng bình thường (start < end) hoặc qua nửa đêm (start > end)
+    return (start <= now_local < end) if start <= end else (now_local >= start or now_local < end)
 # ===========================
 # Config
 # ===========================
@@ -93,10 +91,10 @@ TELE_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELE_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 #IM LẶNG
-QUIET_ENABLE=1
-QUIET_START=00:00
-QUIET_END=07:00
-QUIET_TZ=Asia/Ho_Chi_Minh
+QUIET_ENABLE = 1
+QUIET_START = 00:00
+QUIET_END = 07:00
+QUIET_TZ = Asia/Ho_Chi_Minh
 
 # Technical Parameters
 EMA_FAST = 20
@@ -563,7 +561,7 @@ LAST_MID_KEY = {}  # chặn gửi trùng giữa kỳ theo phút
 def stage_now():
     """Xác định đang ở đầu giờ (H1 CLOSE) hay giữa giờ (H1 MID), có nới ±5 phút."""
     m = datetime.now(timezone.utc).minute
-    if 0 <= m <= 5:
+    if 0 <= m <= 15:
         return "H1 CLOSE"
     elif 30 <= m <= 35:
         return "H1 MID"

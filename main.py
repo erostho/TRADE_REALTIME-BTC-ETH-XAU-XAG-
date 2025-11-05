@@ -574,9 +574,9 @@ LAST_MID_KEY = {}  # chặn gửi trùng giữa kỳ theo phút
 def stage_now():
     """Xác định đang ở đầu giờ (H1 CLOSE) hay giữa giờ (H1 MID), có nới ±5 phút."""
     m = datetime.now(timezone.utc).minute
-    if 0 <= m <= 05:
+    if 0 <= m <= 5:
         return "H1 CLOSE"
-    elif 30 <= m <= 45:
+    elif 30 <= m <= 35:
         return "H1 MID"
     else:
         return "RUN"

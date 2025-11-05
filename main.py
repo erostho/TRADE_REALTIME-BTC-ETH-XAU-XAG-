@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-
+import os, requests
 import ccxt
 
 load_dotenv()
@@ -100,7 +100,62 @@ def init_state_structs(symbols):
     last_mid_update = {sym: 0 for sym in symbols}
     last_signal = {sym: None for sym in symbols}
 
+# ================= TELEGRAM SEND =================
+
+def tg_send(text, parse_mode="Markdown"):
+    if not TG_TOKEN or not TG_CHAT:
+        print("⚠️ TELEGRAM env chưa có, bỏ qua gửi.")
+        return
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
+    data = {
+        "chat_id": TG_CHAT,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": True
+    }
+    try:
+        r = requests.post(url, json=data, timeout=15)
+        print("📩 Telegram:", r.status_code, r.text[:120])
+    except Exception as e:
+        print("❌ Telegram error:", e)
 # ===========================
+# ================= TELEGRAM BATCH =================
+BATCH_LINES = []
+
+def stage_now():
+    """Xác định giai đoạn hiện tại — đầu giờ hay giữa giờ"""
+    now = datetime.now(timezone.utc).astimezone()
+    m = now.minute
+    if m == 0:
+        return "close"
+    if m == 30:
+        return "mid"
+    return "other"
+
+def add_line(symbol, timeframe, summary):
+    """Gom các dòng text cần gửi"""
+    BATCH_LINES.append(f"• *{symbol}* ({timeframe}): {summary}")
+
+def flush_batch():
+    """Gửi gộp 1 tin duy nhất"""
+    stg = stage_now()
+    if stg == "close":
+        header = "🕐 *TỔNG HỢP SAU KHI ĐÓNG NẾN 1H*"
+    elif stg == "mid":
+        header = "⏱️ *CẬP NHẬT GIỮA GIỜ (30’)*"
+    else:
+        print("⏸️ Không phải giờ gửi, bỏ qua Telegram.")
+        return
+
+    if not BATCH_LINES:
+        print("⚠️ Không có nội dung để gửi.")
+        return
+
+    body = "\n".join(BATCH_LINES)
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    tg_send(f"{header}\n{body}\n_{now_str}_")
+    BATCH_LINES.clear()
+      
 # Exchange init
 # ===========================
 def make_exchange(name: str):
@@ -494,9 +549,30 @@ def mid_update(sym, df1):
     if advice:
         msg_lines.append(advice)
 
-    telegram_send("\n".join(msg_lines))
+    #telegram_send("\n".join(msg_lines))
+    add_line(sym, "MID", mid_text)   # mid_text là nội dung bạn tạo trong mid_update
     print("\n".join(msg_lines))
+# =================
+# Telegram batching
+# =================
+TG_BATCH = []
 
+def stage_now():
+    """Xác định đang ở đầu giờ (H1 close) hay giữa giờ (H1 mid)."""
+    # phút 0 => CLOSE nến 1H; phút 30 => MID của nến 1H
+    m = datetime.now(timezone.utc).minute
+    return "H1 CLOSE" if m == 0 else ("H1 MID" if m == 30 else "RUN")
+
+def add_line(symbol, tf, text):
+    TG_BATCH.append(f"• {symbol} [{tf}] {text}")
+
+def flush_batch():
+    if not TG_BATCH:
+        return
+    title = f"[{stage_now()}] {EXCHANGE_NAME.upper()} update"
+    body = title + "\n" + "\n".join(TG_BATCH)
+    telegram_send(body)
+    TG_BATCH.clear()
 # ===========================
 # Main Loop
 # ===========================
@@ -533,7 +609,9 @@ def run_loop():
                         report, decided_side, reco = make_report(sym, a1, a2, a4, ad)
                         print("="*72)
                         print(report)
-                        telegram_send(report)
+
+                        # ✅ gom vào batch, hiển thị theo TF chính bạn đang phân tích (1H)
+                        add_line(sym, "1H", report)
 
                         if decided_side and reco:
                             last_signal[sym] = {
@@ -551,6 +629,8 @@ def run_loop():
 
                 except Exception as e:
                     print(f"[ERR][{sym}] {e}")
+            # ✅ gửi 1 tin duy nhất cho batch vừa xử lý
+            flush_batch()
 
             if time.time() - last_cache_save > SAVE_INTERVAL:
                 save_cache()

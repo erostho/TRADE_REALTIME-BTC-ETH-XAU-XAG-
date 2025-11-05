@@ -585,7 +585,7 @@ def mid_update(sym, df1):
             f"RSI={rsi:.1f}, MACD={macd:.3f}/{macd_signal:.3f}",
             action,
         ]
-        telegram_send("\n".join(lines))
+        telegram_send("\n".join(lines) + "\n" + "──────────────────────────────")
     except Exception as e:
         print(f"[MID_ERR][{sym}] {e}")
       
@@ -606,7 +606,7 @@ def add_line(symbol, tf, text):
 def flush_batch():
     if not TG_BATCH:
         return
-    title = f"[{stage_now()}] {EXCHANGE_NAME.upper()} update"
+    title = f"[{stage_now()}] CẬP NHẬT THỊ TRƯỜNG"
     body = title + "\n" + "\n".join(TG_BATCH)
     telegram_send(body)
     TG_BATCH.clear()

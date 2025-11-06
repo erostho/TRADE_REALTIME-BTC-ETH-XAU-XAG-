@@ -360,6 +360,36 @@ def candle_signal(df):
     return None
 
 # ===========================
+def sr_levels(df, lookback=60, gap_pct=0.15/100.0):
+    """
+    Trả về 2 mức HT gần giá nhất (dưới giá) và 2 mức KC gần giá nhất (trên giá).
+    Lọc bớt các mức quá sát nhau bằng gap_pct (mặc định 0.15%).
+    """
+    df_tail = df.tail(lookback).copy()
+    price = float(df_tail["close"].iloc[-1])
+
+    lows  = sorted(df_tail["low"].tolist())
+    highs = sorted(df_tail["high"].tolist())
+
+    # hỗ trợ: < price, lấy từ gần nhất trở xuống
+    supports = [x for x in lows if x < price]
+    supports = sorted(supports, key=lambda x: abs(price - x))  # gần giá trước
+    # kháng cự: > price, lấy từ gần nhất trở lên
+    resistances = [x for x in highs if x > price]
+    resistances = sorted(resistances, key=lambda x: abs(price - x))
+
+    # khử trùng lặp mức quá sát nhau
+    def dedup(levels):
+        out = []
+        for v in levels:
+            if not out or abs(v - out[-1]) / max(1e-12, out[-1]) > gap_pct:
+                out.append(v)
+        return out
+
+    supports    = dedup(supports)[:2]
+    resistances = dedup(resistances)[:2]
+    return supports, resistances
+++++++++++=
 # Analyzer
 # ===========================
 def analyze_one_tf(df, tf_name):
@@ -467,35 +497,30 @@ def calc_confidence(a1, a4):
 
     return round(score / total * 100)
   
-def make_report(sym, a1, a2, a4, ad):
+def make_report(sym, a1, a2, a4, ad, df1):
     price = a1["price"]
     tstr = ts_to_str(a1["time"])
     lines = []
     lines.append(f"🕒 <b>{sym}</b> • cập nhật {tstr}")
     lines.append(f"Giá hiện tại: <b>{pretty_price(price)}</b>")
 
-    lines.append("\n<b>• Xu hướng & tín hiệu đa khung</b>")
-    lines.append(f"1H: trend <b>{a1['trend']}</b>, RSI={a1['rsi']:.1f}, MACD={a1['macd']:.3f}/{a1['macd_signal']:.3f}, "
-                 f"BBW={a1['bb_width']:.2f}%"
-                 + (f", nến={a1['candle']}" if a1['candle'] else ""))
-    lines.append(f"2H: trend <b>{a2['trend']}</b>, RSI={a2['rsi']:.1f}, MACD={a2['macd']:.3f}/{a2['macd_signal']:.3f}, "
-                 f"BBW={a2['bb_width']:.2f}%"
-                 + (f", nến={a2['candle']}" if a2['candle'] else ""))
-    lines.append(f"4H: trend <b>{a4['trend']}</b>, RSI={a4['rsi']:.1f}, MACD={a4['macd']:.3f}/{a4['macd_signal']:.3f}, "
-                 f"BBW={a4['bb_width']:.2f}%"
-                 + (f", nến={a4['candle']}" if a4['candle'] else ""))
-    lines.append(f"1D: trend <b>{ad['trend']}</b>, RSI={ad['rsi']:.1f}, MACD={ad['macd']:.3f}/{ad['macd_signal']:.3f}, "
-                 f"BBW={ad['bb_width']:.2f}%"
-                 + (f", nến={ad['candle']}" if ad['candle'] else ""))
+    # === VÙNG HỖ TRỢ / KHÁNG CỰ ===
+    sup, res = sr_levels(df1, lookback=60, gap_pct=0.15/100.0)
+    sup_txt = " • ".join(pretty_price(x) for x in sup) if sup else "—"
+    res_txt = " • ".join(pretty_price(x) for x in res) if res else "—"
+    lines.append("\n<b>• Vùng Hỗ trợ / Kháng cự (gần hiện tại)</b>")
+    lines.append(f"HT: {sup_txt}")
+    lines.append(f"KC: {res_txt}")
 
+    # vẫn giữ cảnh báo 'nén giá' nếu có
     if a1["compression"]:
         lines.append("🔧 1H đang <b>nén giá</b> → sắp có cú bung mạnh.")
 
+    # === Quyết định khuyến nghị (giữ nguyên phần logic cũ) ===
     bull_cond = (a1["rsi"] > 52 and a1["macd"] > a1["macd_signal"])
     bear_cond = (a1["rsi"] < 48 and a1["macd"] < a1["macd_signal"])
-
     br_down = a1["brk_retest_down"] or a2["brk_retest_down"] or a4["brk_retest_down"]
-    br_up = a1["brk_retest_up"] or a2["brk_retest_up"] or a4["brk_retest_up"]
+    br_up   = a1["brk_retest_up"]   or a2["brk_retest_up"]   or a4["brk_retest_up"]
 
     reco_text = ""
     decided_side = None
@@ -527,19 +552,38 @@ def make_report(sym, a1, a2, a4, ad):
             decided_side = "buy"
         else:
             lines.append("\n⏸ Đa khung chưa đồng pha, chờ tín hiệu rõ hơn.")
+            reco = None  # để tránh UnboundLocalError phía dưới
 
+    # Ghi chú xác nhận RSI/MACD (giữ nguyên)
     if bear_cond and a1["trend"] == "down":
         lines.append("📉 <b>RSI & MACD đồng thuận giảm</b> → tín hiệu SELL tin cậy.")
     if bull_cond and a1["trend"] == "up":
         lines.append("📈 <b>RSI & MACD đồng thuận tăng</b> → tín hiệu BUY tin cậy.")
 
-    if a1["candle"] in ("shooting_star", "bearish_engulfing") and a1["trend"] == "down":
-        lines.append("🧨 1H vừa có nến đảo chiều giảm → xác suất đạp tiếp cao.")
-    if a1["candle"] in ("hammer", "bullish_engulfing") and a1["trend"] == "up":
-        lines.append("🧨 1H vừa có nến đảo chiều tăng → xác suất bật tiếp cao.")
+    # === Dự đoán kịch bản ===
+    scenario = ""
+    if a1["trend"] == "down":
+        if res and price <= res[0] * 0.998:
+            scenario = "⬇️ Giá có thể hồi nhẹ về kháng cự rồi giảm tiếp."
+        elif sup and price <= sup[0] * 1.002:
+            scenario = "⚠️ Giá có thể test hỗ trợ và rung lắc/sideway ngắn hạn."
+        else:
+            scenario = "📉 Duy trì xu hướng giảm; ưu tiên SELL khi hồi yếu."
+    elif a1["trend"] == "up":
+        if sup and price >= sup[0] * 1.002:
+            scenario = "⬆️ Điều chỉnh nhẹ về hỗ trợ rồi bật tăng lại."
+        elif res and price >= res[0] * 0.998:
+            scenario = "⚠️ Chạm kháng cự; có thể rung lắc trước khi vượt."
+        else:
+            scenario = "📈 Duy trì xu hướng tăng; ưu tiên BUY khi điều chỉnh nông."
+    else:
+        scenario = "⏸ Sideway; chờ tín hiệu bứt phá."
+
+    lines.append(f"\n<b>🧭 Dự đoán Kịch Bản:</b> {scenario}")
 
     if reco_text:
         lines.append(reco_text)
+      
     # ✅ Tính % xác suất entry
     confidence = calc_confidence(a1, a4)
     lines.append(f"🎯 Xác suất nên vào lệnh: <b>{confidence}%</b>")
@@ -670,7 +714,7 @@ def run_loop():
                 a4 = analyze_one_tf(df4, TF_4H)
                 ad = analyze_one_tf(dfd, TF_1D)
             
-                report, decided_side, reco = make_report(sym, a1, a2, a4, ad)
+                report, decided_side, reco = make_report(sym, a1, a2, a4, ad, df1)
             
                 # chỉ GỬI report khi đúng H1 CLOSE
                 if stage_now() == "H1 CLOSE":

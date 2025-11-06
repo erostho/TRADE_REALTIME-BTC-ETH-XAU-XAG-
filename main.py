@@ -389,7 +389,7 @@ def sr_levels(df, lookback=60, gap_pct=0.15/100.0):
     supports    = dedup(supports)[:2]
     resistances = dedup(resistances)[:2]
     return supports, resistances
-++++++++++=
+#++++++++++=
 # Analyzer
 # ===========================
 def analyze_one_tf(df, tf_name):

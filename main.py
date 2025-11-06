@@ -53,6 +53,21 @@ QUIET_START  = os.getenv("QUIET_START", "00:00")   # ví dụ "00:00"
 QUIET_END    = os.getenv("QUIET_END", "07:00")    # ví dụ "07:00"
 QUIET_TZ     = os.getenv("QUIET_TZ", "Asia/Ho_Chi_Minh")
 
+USE_YF_METALS = os.getenv("USE_YF_METALS", "0") == "1"
+
+try:
+    import yfinance as yf
+except Exception as _:
+    yf = None
+
+YF_ALIAS = {
+    "XAU/USDT:USDT": "XAUUSD=X",   # Gold spot USD
+    "XAG/USDT:USDT": "XAGUSD=X",   # Silver spot USD
+    "XAU/USD:USD":   "XAUUSD=X",
+    "XAG/USD:USD":   "XAGUSD=X",
+    "XAUUSDT":       "XAUUSD=X",
+    "XAGUSDT":       "XAGUSD=X",
+}
 def _parse_hhmm(s: str):
     h, m = s.split(":")
     return int(h), int(m)
@@ -229,8 +244,86 @@ def load_signals():
             print(f"[SIGNAL] Loaded {len(last_signal)} syms from {SIGNAL_FILE}")
         except Exception as e:
             print(f"[SIGNAL] Load error: {e}")
-      
+
+def _yf_interval_and_period(tf: str):
+    tf = tf.lower()
+    if tf == "1h":
+        return "60m", "60d"   # 1h bars ~ 60 ngày
+    if tf == "1d":
+        return "1d",  "2y"
+    # 2h/4h sẽ resample từ 1h
+    return "60m", "60d"
+
+def _resample_ohlc(df_1h: pd.DataFrame, tf: str) -> pd.DataFrame:
+    """Resample từ 1h → 2h/4h, giữ cột ['open','high','low','close','vol']"""
+    if tf.lower() not in ("2h", "4h"):
+        return df_1h
+    rule = "2H" if tf.lower() == "2h" else "4H"
+    df = df_1h.copy()
+    df.index = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    agg = {
+        "open":  "first",
+        "high":  "max",
+        "low":   "min",
+        "close": "last",
+        "vol":   "sum",
+    }
+    out = df.resample(rule).agg(agg).dropna()
+    out = out.reset_index()
+    out["ts"] = (out["index"].astype("int64") // 10**6).astype("int64")
+    out = out[["ts","open","high","low","close","vol"]]
+    return out
+
+def fetch_yf_ohlcv(symbol_bot: str, timeframe: str, limit=300) -> pd.DataFrame | None:
+    """Kéo nến XAU/XAG từ Yahoo Finance, trả DataFrame ts-ms + ohlcv theo schema bot."""
+    if not yf:
+        print("[YF] yfinance not installed.")
+        return None
+    yf_sym = YF_ALIAS.get(symbol_bot)
+    if not yf_sym:
+        return None
+
+    # Lấy interval & period cho 1h/1d (2h/4h dùng 1h rồi resample)
+    interval, period = _yf_interval_and_period(timeframe)
+    try:
+        tkr = yf.Ticker(yf_sym)
+        hist = tkr.history(interval=interval, period=period, auto_adjust=False)
+        if hist.empty:
+            print(f"[YF] Empty data for {yf_sym} {timeframe}")
+            return None
+
+        # Chuẩn hóa khung 1h/1d
+        df = pd.DataFrame({
+            "ts":   (hist.index.view("int64") // 10**6).astype("int64"),
+            "open": hist["Open"].astype(float).values,
+            "high": hist["High"].astype(float).values,
+            "low":  hist["Low"].astype(float).values,
+            "close":hist["Close"].astype(float).values,
+            "vol":  hist.get("Volume", pd.Series([0]*len(hist))).fillna(0).astype(float).values,
+        })
+
+        if timeframe.lower() in ("2h","4h"):
+            df = _resample_ohlc(df, timeframe)
+
+        # Giới hạn số bars
+        if len(df) > limit:
+            df = df.iloc[-limit:].reset_index(drop=True)
+
+        return df
+    except Exception as e:
+        print(f"[YF] fetch error {yf_sym} {timeframe}: {e}")
+        return None
+
 def fetch_ohlcv_cached(symbol, timeframe, limit=300):
+    # --- NEW: ưu tiên Yahoo cho vàng/bạc nếu bật ---
+    if USE_YF_METALS and (symbol.upper().startswith("XAU") or symbol.upper().startswith("XAG")):
+        df_yf = fetch_yf_ohlcv(symbol, timeframe, limit)
+        if df_yf is not None and len(df_yf):
+            key = (symbol, timeframe)
+            cache_ohlcv[key] = {"last_ts": int(df_yf["ts"].iloc[-1]), "df": df_yf}
+            return df_yf
+        # nếu Yahoo lỗi → rơi xuống cache/ccxt như bình thường
+    
     key = (symbol, timeframe)
     if key not in cache_ohlcv:
         df = fetch_ohlcv_df(symbol, timeframe, limit)

@@ -619,11 +619,32 @@ def mid_update(sym, df1):
     a1_live = analyze_one_tf(df_tmp, TF_1H)
 
     lines = [
-        f"⏱️ Giữa kỳ {sym}",
-        f"Giá hiện tại: {pretty_price(price_now)}",
-        f"Trend tạm: {a1_live['trend']}, RSI={a1_live['rsi']:.1f}, MACD={a1_live['macd']:.3f}/{a1_live['macd_signal']:.3f}",
+    f"🕒 Giữa kỳ {sym}",
+    f"Giá hiện tại: {pretty_price(price_now)}",
+    f"Trend tạm: {a1_live['trend']}, RSI={a1_live['rsi']:.1f}"
     ]
 
+    # --- Dự đoán kịch bản ---
+    scenario = ""
+    if a1_live["trend"] == "down":
+        if a1_live["rsi"] < 45:
+            scenario = "📉 Áp lực giảm vẫn mạnh; ưu tiên canh SELL khi hồi nhẹ."
+        elif a1_live["rsi"] > 55:
+            scenario = "⚠️ Momentum phục hồi; tránh add SELL, chờ tín hiệu rõ hơn."
+        else:
+            scenario = "⏸ Sideway ngắn hạn, chưa rõ hướng."
+    elif a1_live["trend"] == "up":
+        if a1_live["rsi"] > 60:
+            scenario = "📈 Đà tăng duy trì; ưu tiên BUY khi điều chỉnh nông."
+        elif a1_live["rsi"] < 45:
+            scenario = "⚠️ Có thể điều chỉnh ngắn; tránh add BUY."
+        else:
+            scenario = "⏸ Thị trường đang tạm cân bằng."
+    else:
+        scenario = "⏸ Sideway, chờ bứt phá rõ hướng."
+    
+    lines.append(f"🧭 Dự đoán Kịch Bản: {scenario}")
+    
     sig = last_signal.get(sym)
     advice = "🕓 Chưa có tín hiệu gốc để quản lý."
     if sig:

@@ -420,7 +420,53 @@ def build_reco(side, price):
         tp2 = price * (1 + TP2_PCT)
         sl = price * (1 - SL_PAD_PCT)
     return {"sl": sl, "tp1": tp1, "tp2": tp2}
+def build_reco(side, price):
+    if side == "sell":
+        tp1 = price * (1 - TP1_PCT)
+        tp2 = price * (1 - TP2_PCT)
+        sl = price * (1 + SL_PAD_PCT)
+    else:
+        tp1 = price * (1 + TP1_PCT)
+        tp2 = price * (1 + TP2_PCT)
+        sl = price * (1 - SL_PAD_PCT)
+    return {"sl": sl, "tp1": tp1, "tp2": tp2}
 
+
+# ✅ THÊM SAU ĐÂY:
+def calc_confidence(a1, a4):
+    """Tính % xác suất nên vào lệnh dựa trên đồng thuận kỹ thuật"""
+    score = 0
+    total = 0
+
+    # Trend đồng pha
+    total += 25
+    if a1["trend"] == a4["trend"]:
+        score += 25
+
+    # RSI thuận hướng
+    total += 20
+    if (a1["trend"] == "up" and a1["rsi"] > 55) or (a1["trend"] == "down" and a1["rsi"] < 45):
+        score += 20
+
+    # MACD thuận hướng
+    total += 20
+    if (a1["trend"] == "up" and a1["macd"] > a1["macd_signal"]) or \
+       (a1["trend"] == "down" and a1["macd"] < a1["macd_signal"]):
+        score += 20
+
+    # Break–Retest đúng hướng
+    total += 20
+    if (a1["trend"] == "up" and a1["brk_retest_up"]) or (a1["trend"] == "down" and a1["brk_retest_down"]):
+        score += 20
+
+    # Nến đảo chiều thuận hướng
+    total += 15
+    if (a1["trend"] == "up" and a1["candle"] in ["hammer", "bullish_engulfing"]) or \
+       (a1["trend"] == "down" and a1["candle"] in ["shooting_star", "bearish_engulfing"]):
+        score += 15
+
+    return round(score / total * 100)
+  
 def make_report(sym, a1, a2, a4, ad):
     price = a1["price"]
     tstr = ts_to_str(a1["time"])
@@ -494,6 +540,13 @@ def make_report(sym, a1, a2, a4, ad):
 
     if reco_text:
         lines.append(reco_text)
+    # ✅ Tính % xác suất entry
+    confidence = calc_confidence(a1, a4)
+    lines.append(f"🎯 Xác suất nên vào lệnh: <b>{confidence}%</b>")
+
+    # (nếu muốn lọc không gửi tín hiệu yếu)
+    # if confidence < 55:
+    #     lines.append("⚪ Tín hiệu yếu → KHÔNG nên vào lệnh.")
 
     return "\n".join(lines), decided_side, (reco if reco_text else None)
 
